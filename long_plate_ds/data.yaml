@@ -1,5 +1,5 @@
-train: /home/kurokku/Documents/Lessons/4.1/Computer System Technologies/Project/dataset1/images/train
-val: /home/kurokku/Documents/Lessons/4.1/Computer System Technologies/Project/dataset1/images/val
+train: .../long_plate_ds/images/train
+val: .../long_plate_ds/images/val
 
 nc: 1
 names: ["plate"]
