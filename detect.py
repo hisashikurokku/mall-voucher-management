@@ -4,11 +4,11 @@ import cv2
 import numpy as np
 
 # --------------------------
-# CONFIG (change these)
+# CONFIG
 # --------------------------
-SHORT_MODEL_PATH = "short_plate_ds/runs/detect/train8/weights/best.pt"   # short plate YOLO model
-LONG_MODEL_PATH  = "long_plate_ds/runs/detect/train2/weights/best.pt"  # long plate YOLO model
-INPUT_IMAGE = "GreenParking/0459_07314_b.jpg"
+SHORT_MODEL_PATH = "short_plate_ds/runs/detect/train/weights/best.pt"   # short plate YOLO model
+LONG_MODEL_PATH  = "long_plate_ds/runs/detect/train/weights/best.pt"  # long plate YOLO model
+INPUT_IMAGE = "path/to/test/image"
 CONF_TH = 0.40
 PADDING = 8
 
@@ -18,10 +18,6 @@ PADDING = 8
 short_model = YOLO(SHORT_MODEL_PATH)
 long_model = YOLO(LONG_MODEL_PATH)
 ocr = PaddleOCR(lang='en')
-
-# --------------------------
-# Your original helper functions
-# --------------------------
 
 # def autocorrect(ch):
 #     corrections = {"O": "0", "I": "1", "Z": "2", "S": "5", "B": "8"}
@@ -122,7 +118,7 @@ def read_plate_from_crop(crop_img, min_row_gap_ratio=0.08):
                 detections.append((np.array(box), clean, float(conf)))
 
     # Split multi-char detections into single-char entries (use the same split_chars routine)
-    char_entries = []   # will contain tuples (x_center, y_center, char, conf, box)
+    char_entries = [] 
     for poly, text, score in detections:
         text = text.strip()
         if len(text) == 1:
@@ -133,7 +129,7 @@ def read_plate_from_crop(crop_img, min_row_gap_ratio=0.08):
             char_entries.append((xc, yc, text, score, poly.tolist()))
         else:
             # split evenly across x-range
-            pieces = split_chars(poly, text)  # returns (box, ch, conf_est)
+            pieces = split_chars(poly, text) 
             for box, ch, conf_e in pieces:
                 xs = [float(p[0]) for p in box]
                 ys = [float(p[1]) for p in box]
@@ -148,12 +144,9 @@ def read_plate_from_crop(crop_img, min_row_gap_ratio=0.08):
     y_coords = [e[1] for e in char_entries]
     y_min, y_max = min(y_coords), max(y_coords)
     h_crop = crop_img.shape[0] if crop_img is not None else 1
-    # If max-min is less than threshold of image height, single row
     if (y_max - y_min) < max(2.0, min_row_gap_ratio * h_crop):
-        # Single row: sort by x and return
         char_entries.sort(key=lambda x: x[0])
         plate = "".join([c for _, _, c, _, _ in char_entries])
-        # rows_list with one row
         row0 = [(x, y, ch) for x, y, ch, _, _ in char_entries]
         return plate, [row0], detections
 
@@ -215,7 +208,7 @@ def read_plate_from_crop(crop_img, min_row_gap_ratio=0.08):
     return plate_combined, rows_list, detections
 
 # --------------------------
-# NEW: Crop plate using YOLO
+# Crop plate using YOLO
 # --------------------------
 def crop_plate(full_img):
     H, W = full_img.shape[:2]
@@ -238,7 +231,7 @@ def crop_plate(full_img):
 
     return full_img[y1:y2, x1:x2]
 
-def format_vn_plate(top_row, bottom_row):
+def format_vn_plate(top_row, bottom_row): # Format short plates
     """
     Format the Vietnamese license plate consisting of:
         Top row:    2 digits + 1–2 letters/digits (region + series)
