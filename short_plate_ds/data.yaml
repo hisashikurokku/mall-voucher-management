@@ -1,0 +1,5 @@
+train: .../short_plate_ds/images/train
+val: .../short_plate_ds/images/val
+
+nc: 1
+names: ["plate"]
