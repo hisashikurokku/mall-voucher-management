@@ -1,0 +1,5 @@
+paddlepaddle==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+paddleocr==3.3.2
+ultralytics==8.0.196
+opencv-python==4.8.1.78
+numpy==1.26.4
