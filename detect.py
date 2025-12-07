@@ -6,9 +6,9 @@ import numpy as np
 # --------------------------
 # CONFIG
 # --------------------------
-SHORT_MODEL_PATH = "short_plate_ds/runs/detect/train/weights/best.pt"   # short plate YOLO model
-LONG_MODEL_PATH  = "long_plate_ds/runs/detect/train/weights/best.pt"  # long plate YOLO model
-INPUT_IMAGE = "path/to/test/image"
+SHORT_MODEL_PATH = "short_plate_ds/runs/detect/train8/weights/best.pt"   # short plate YOLO model
+LONG_MODEL_PATH  = "long_plate_ds/runs/detect/train2/weights/best.pt"  # long plate YOLO model
+INPUT_IMAGE = "path/to/input/image"
 CONF_TH = 0.40
 PADDING = 8
 
@@ -17,7 +17,7 @@ PADDING = 8
 # --------------------------
 short_model = YOLO(SHORT_MODEL_PATH)
 long_model = YOLO(LONG_MODEL_PATH)
-ocr = PaddleOCR(lang='en')
+ocr = PaddleOCR(lang='en', det_model_dir=None, rec_model_dir=None)
 
 # def autocorrect(ch):
 #     corrections = {"O": "0", "I": "1", "Z": "2", "S": "5", "B": "8"}
