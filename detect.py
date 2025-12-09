@@ -9,7 +9,7 @@ from server import send_plate_event
 # --------------------------
 SHORT_MODEL_PATH = "short_plate_ds/runs/detect/train8/weights/best.pt"   # short plate YOLO model
 LONG_MODEL_PATH  = "long_plate_ds/runs/detect/train2/weights/best.pt"  # long plate YOLO model
-INPUT_IMAGE = "20161011142751-bien-so-xe-ngoai-giao-3.jpg"
+INPUT_IMAGE = "path/to/test/image"
 CONF_TH = 0.40
 PADDING = 8
 
