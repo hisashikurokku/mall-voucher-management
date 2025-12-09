@@ -2,13 +2,14 @@ from paddleocr import PaddleOCR
 from ultralytics import YOLO
 import cv2
 import numpy as np
+from server import send_plate_event
 
 # --------------------------
 # CONFIG
 # --------------------------
 SHORT_MODEL_PATH = "short_plate_ds/runs/detect/train8/weights/best.pt"   # short plate YOLO model
 LONG_MODEL_PATH  = "long_plate_ds/runs/detect/train2/weights/best.pt"  # long plate YOLO model
-INPUT_IMAGE = "path/to/input/image"
+INPUT_IMAGE = "20161011142751-bien-so-xe-ngoai-giao-3.jpg"
 CONF_TH = 0.40
 PADDING = 8
 
@@ -24,29 +25,40 @@ ocr = PaddleOCR(lang='en', det_model_dir=None, rec_model_dir=None)
 #     return corrections.get(ch, ch)
 
 def detect_plate_bbox(img, try_long_first=False):
-    """Return best YOLO bbox or None"""
+    """Return best YOLO bbox or None, also print debug info."""
 
-    # Which model first?
+    if try_long_first:
+        print("[DEBUG] Trying LONG model first based on aspect ratio")
+    else:
+        print("[DEBUG] Trying SHORT model first based on aspect ratio")
+
     primary = long_model if try_long_first else short_model
     secondary = short_model if try_long_first else long_model
 
-    # Try primary detector
+    # Try primary model
     results = primary(img)
     boxes = results[0].boxes
-
     if len(boxes) > 0:
         boxes = sorted(boxes, key=lambda b: float(b.conf), reverse=True)
-        if float(boxes[0].conf) >= CONF_TH:
+        conf = float(boxes[0].conf)
+        if conf >= CONF_TH:
+            model_used = "LONG" if try_long_first else "SHORT"
+            print(f"[DEBUG] {model_used} model detected plate: conf={conf:.3f}")
             return boxes[0]
 
-    # Try fallback detector if needed
+    # Try fallback model
+    print("[DEBUG] Primary model failed → trying fallback model")
     results = secondary(img)
     boxes = results[0].boxes
     if len(boxes) > 0:
         boxes = sorted(boxes, key=lambda b: float(b.conf), reverse=True)
-        if float(boxes[0].conf) >= CONF_TH:
+        conf = float(boxes[0].conf)
+        if conf >= CONF_TH:
+            model_used = "SHORT" if try_long_first else "LONG"
+            print(f"[DEBUG] {model_used} model fallback detection: conf={conf:.3f}")
             return boxes[0]
 
+    print("[DEBUG] Both models failed to detect plate")
     return None
 
 def split_chars(poly, text):
@@ -314,3 +326,5 @@ if __name__ == "__main__":
     print("Detected:", plate_text)
     print("Final:", formatted)
     print("Cropped plate saved: plate_crop_debug.jpg")
+
+    send_plate_event(formatted, confidence=1.0)
