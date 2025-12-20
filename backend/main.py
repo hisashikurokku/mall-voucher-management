@@ -2,18 +2,23 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import uuid
 from bson import ObjectId
-
+from urllib.parse import quote_plus
 
 app = FastAPI()
 
 MONGODB_URI = "mongodb://localhost:27017"
-DB_NAME = "test" # replace with actual db name
+DB_NAME = "" # replace with actual db name
+
+DB_PASSWORD = quote_plus("") #replace with actual password
+SECOND_MONGODB_URI = f"" #replace with actual URI
+SECOND_DB_NAME = "" #replace with actual db name
 
 client = AsyncIOMotorClient(MONGODB_URI)
 db = client[DB_NAME]
+
+second_client = AsyncIOMotorClient(SECOND_MONGODB_URI)
+second_db = second_client[SECOND_DB_NAME]
 
 def convert_to_json_safe(doc):
     if doc is None:
@@ -65,20 +70,28 @@ async def plate_detected(event: PlateEvent):
     visit_doc = event.model_dump()
     visit_doc["visit_type"] = visit_type
 
+    if visit_type == "entry":
+        visit_doc["in_time"] = event.detected_at
+        visit_doc["out_time"] = None
+    else:
+        visit_doc["in_time"] = last_visit.get("in_time")
+        visit_doc["out_time"] = event.detected_at
+
     # Insert visit log
     result = await db.visits.insert_one(visit_doc)
 
-    # If it's an ENTRY -> attempt voucher creation
-    created_voucher = None
-    if visit_type == "entry":
-        created_voucher = await generate_voucher(
-            event.plate_number, event.detected_at
-        )
+    voucher_response = await generate_voucher(
+        plate_number=event.plate_number,
+        in_time=visit_doc["in_time"],
+        out_time=visit_doc["out_time"]
+    )
 
     return {
         "visit_id": str(result.inserted_id),
         "visit_type": visit_type,
-        "voucher_created": convert_to_json_safe(created_voucher),
+        "in_time": visit_doc["in_time"].isoformat() if visit_doc.get("in_time") else None,
+        "out_time": visit_doc["out_time"].isoformat() if visit_doc.get("out_time") else None,
+        "voucher_sent": voucher_response is not None
     }
 
 @app.get("/api/admin/visits")
@@ -98,56 +111,25 @@ async def admin_get_visits(
 
     return {"visits": visits}
 
-@app.get("/api/admin/vouchers")
-async def admin_get_vouchers(
-    plate_number: str | None = None,
-    status: str | None = None,
-    limit: int = 50
+async def generate_voucher(
+    plate_number: str,
+    in_time: datetime,
+    out_time: datetime | None
 ):
-    query = {}
+    # voucher_code = f"{in_time.strftime('%Y%m%d')}-{plate_number.replace('-', '').replace('.', '')}"
 
-    if plate_number:
-        query["plate_number"] = plate_number
-
-    if status:
-        query["status"] = status  # active / used / expired
-
-    cursor = db.vouchers.find(query).sort("created_at", -1).limit(limit)
-
-    vouchers = []
-    async for doc in cursor:
-        vouchers.append(convert_to_json_safe(doc))
-
-    return {"vouchers": vouchers}
-
-async def generate_voucher(plate_number: str, detected_at: datetime):
-    day_start = datetime(detected_at.year, detected_at.month, detected_at.day)
-    day_end = day_start + timedelta(days=1)
-
-    existing = await db.vouchers.find_one({
-        "plate_number": plate_number,
-        "created_at": {"$gte": day_start, "$lt": day_end}
-    })
-
-    if existing:
-        return None
-
-    voucher_code = f"{detected_at.strftime('%Y%m%d')}-{plate_number.replace('-', '').replace('.', '')}"
-
-    voucher = {
-        "plate_number": plate_number,
-        "voucher_code": voucher_code,
-        "discount_type": "percentage",
-        "discount_value": 10,
-        "created_at": detected_at,
-        "valid_from": detected_at,
-        "valid_until": day_end,
-        "status": "active"
+    voucher_doc = {
+        "plateNumber": plate_number,
+        # "voucherCode": voucher_code,
+        "inTime": in_time,
+        "outTime": out_time,
+        # "createdAt": datetime.utcnow(),
     }
 
-    result = await db.vouchers.insert_one(voucher)
-    voucher["_id"] = result.inserted_id
-    return voucher 
+    result = await second_db.vouchers.insert_one(voucher_doc)
+    voucher_doc["_id"] = str(result.inserted_id)
+
+    return voucher_doc
 
 async def generate_next_customer_id():
     doc = await db.plates.find({"customer_id": {"$exists": True}}).sort("customer_id", -1).limit(1).to_list(1)
