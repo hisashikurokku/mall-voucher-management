@@ -1,24 +1,18 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from datetime import datetime, timedelta
+from datetime import datetime
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
+import httpx
 from urllib.parse import quote_plus
 
 app = FastAPI()
 
 MONGODB_URI = "mongodb://localhost:27017"
-DB_NAME = "" # replace with actual db name
-
-DB_PASSWORD = quote_plus("") #replace with actual password
-SECOND_MONGODB_URI = f"" #replace with actual URI
-SECOND_DB_NAME = "" #replace with actual db name
+DB_NAME = "test" # replace with actual db name
 
 client = AsyncIOMotorClient(MONGODB_URI)
 db = client[DB_NAME]
-
-second_client = AsyncIOMotorClient(SECOND_MONGODB_URI)
-second_db = second_client[SECOND_DB_NAME]
 
 def convert_to_json_safe(doc):
     if doc is None:
@@ -34,6 +28,27 @@ def convert_to_json_safe(doc):
             new_doc[k] = v
     return new_doc
 
+async def send_session_to_web(
+    plate_number: str,
+    in_time: datetime,
+    out_time: datetime | None = None,
+):
+    payload = {
+        "plateNumber": plate_number,
+        "inTime": in_time.isoformat(),
+    }
+
+    if out_time:
+        payload["outTime"] = out_time.isoformat()
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        r = await client.post(
+            "http://localhost:3000/api/device/session",
+            json=payload,
+        )
+        r.raise_for_status()
+        return r.json()
+
 class PlateEvent(BaseModel):
     plate_number: str
     camera_id: str = "entrance_1"
@@ -42,56 +57,61 @@ class PlateEvent(BaseModel):
 
 @app.post("/api/events/plate-detected")
 async def plate_detected(event: PlateEvent):
-    plate = await db.plates.find_one({"plate_number": event.plate_number})
+    plate_number = event.plate_number
+    detected_at = event.detected_at
+
+    plate = await db.plates.find_one({"plate_number": plate_number})
 
     if plate is None:
         new_customer_id = await generate_next_customer_id()
         await db.plates.insert_one({
-            "plate_number": event.plate_number,
+            "plate_number": plate_number,
             "customer_id": new_customer_id,
-            "created_at": datetime.utcnow()
+            "created_at": datetime.utcnow(),
         })
-    else:
-        new_customer_id = plate.get("customer_id")
 
     last_visit = await db.visits.find_one(
-        {"plate_number": event.plate_number},
-        sort=[("detected_at", -1)]
+        {"plate_number": plate_number},
+        sort=[("detected_at", -1)],
     )
 
-    if last_visit is None:
+    if last_visit is None or last_visit.get("visit_type") == "exit":
         visit_type = "entry"
-    elif last_visit.get("visit_type") == "entry":
+        in_time = detected_at
+        out_time = None
+    else:
         visit_type = "exit"
-    else:
-        visit_type = "entry"
+        in_time = last_visit.get("in_time")
+        out_time = detected_at
 
-    # Build visit document
-    visit_doc = event.model_dump()
-    visit_doc["visit_type"] = visit_type
+    visit_doc = {
+        "plate_number": plate_number,
+        "visit_type": visit_type,
+        "detected_at": detected_at,
+        "in_time": in_time,
+        "out_time": out_time,
+    }
 
-    if visit_type == "entry":
-        visit_doc["in_time"] = event.detected_at
-        visit_doc["out_time"] = None
-    else:
-        visit_doc["in_time"] = last_visit.get("in_time")
-        visit_doc["out_time"] = event.detected_at
-
-    # Insert visit log
     result = await db.visits.insert_one(visit_doc)
 
-    voucher_response = await generate_voucher(
-        plate_number=event.plate_number,
-        in_time=visit_doc["in_time"],
-        out_time=visit_doc["out_time"]
-    )
+    try:
+        await send_session_to_web(
+            plate_number=plate_number,
+            in_time=in_time,
+            out_time=out_time,
+        )
+        sent_to_web = True
+    except Exception as e:
+        print(f"[WARN] Failed to send session to web: {e}")
+        sent_to_web = False
 
     return {
         "visit_id": str(result.inserted_id),
+        "plate_number": plate_number,
         "visit_type": visit_type,
-        "in_time": visit_doc["in_time"].isoformat() if visit_doc.get("in_time") else None,
-        "out_time": visit_doc["out_time"].isoformat() if visit_doc.get("out_time") else None,
-        "voucher_sent": voucher_response is not None
+        "in_time": in_time.isoformat() if in_time else None,
+        "out_time": out_time.isoformat() if out_time else None,
+        "sent_to_web": sent_to_web,
     }
 
 @app.get("/api/admin/visits")
@@ -110,26 +130,6 @@ async def admin_get_visits(
         visits.append(convert_to_json_safe(doc))
 
     return {"visits": visits}
-
-async def generate_voucher(
-    plate_number: str,
-    in_time: datetime,
-    out_time: datetime | None
-):
-    # voucher_code = f"{in_time.strftime('%Y%m%d')}-{plate_number.replace('-', '').replace('.', '')}"
-
-    voucher_doc = {
-        "plateNumber": plate_number,
-        # "voucherCode": voucher_code,
-        "inTime": in_time,
-        "outTime": out_time,
-        # "createdAt": datetime.utcnow(),
-    }
-
-    result = await second_db.vouchers.insert_one(voucher_doc)
-    voucher_doc["_id"] = str(result.inserted_id)
-
-    return voucher_doc
 
 async def generate_next_customer_id():
     doc = await db.plates.find({"customer_id": {"$exists": True}}).sort("customer_id", -1).limit(1).to_list(1)
