@@ -38,7 +38,7 @@ def detect_plate_bbox(img, try_long_first=False):
     primary   = long_model if try_long_first else short_model
     secondary = short_model if try_long_first else long_model
 
-    results = primary(img)
+    results = primary(img, verbose=False)
     boxes   = results[0].boxes
     if len(boxes) > 0:
         boxes = sorted(boxes, key=lambda b: float(b.conf), reverse=True)
@@ -48,7 +48,7 @@ def detect_plate_bbox(img, try_long_first=False):
             return boxes[0]
 
     print("[DEBUG] Primary model failed → trying fallback model")
-    results = secondary(img)
+    results = secondary(img, verbose=False)
     boxes   = results[0].boxes
     if len(boxes) > 0:
         boxes = sorted(boxes, key=lambda b: float(b.conf), reverse=True)
@@ -249,72 +249,62 @@ def format_vn_plate(top_row, bottom_row): # Format short plates
     return combined
 
 def webcam_loop():
-    global last_plate, last_sent_time
+    global last_capture, recognized_plate
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Cannot open webcam")
         return
 
-    print("Real-time recognition started — press Space to capture")
+    print("Camera ready — press Space to capture, Enter to save")
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        cv2.imshow("Feed", frame)
+        cv2.imshow("Live Feed", frame)
         key = cv2.waitKey(1) & 0xFF
 
-        if key == ord(" "):  # Space
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            temp_path = f"capture_{timestamp}.jpg"
+        if key == ord(" "):
+            last_capture = frame.copy()
 
-            cv2.imwrite(temp_path, frame)
-            print("Frame captured → processing OCR pipeline")
-
-            img = cv2.imread(temp_path)
-            if img is None:
-                print("Captured frame invalid")
-                continue
-
-            H, W = img.shape[:2]
-
-            best_box = detect_plate_bbox(img)
-            if best_box:
-                x1, y1, x2, y2 = map(int, best_box.xyxy[0].tolist())
+            box = detect_plate_bbox(last_capture)
+            if box:
+                H, W = last_capture.shape[:2]
+                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                 x1 = max(0, x1 - PADDING)
                 y1 = max(0, y1 - PADDING)
                 x2 = min(W - 1, x2 + PADDING)
                 y2 = min(H - 1, y2 + PADDING)
 
-                crop = img[y1:y2, x1:x2]
+                crop = last_capture[y1:y2, x1:x2]
                 plate_text, rows_list, _ = read_plate_from_crop(crop)
 
                 if rows_list:
                     if len(rows_list) == 1:
                         top_row = "".join(c for _,_,c in rows_list[0])
-                        formatted = top_row.replace(".", "")
+                        recognized_plate = top_row.replace(".", "")
                     else:
                         top_row = "".join(c for _,_,c in rows_list[0])
                         bottom_row = "".join(c for _,_,c in rows_list[1])
-                        formatted = format_vn_plate(top_row, bottom_row)
+                        recognized_plate = format_vn_plate(top_row, bottom_row)
 
-                    current_time = datetime.utcnow().timestamp()
-
-                    if formatted != last_plate:
-                        print("[DETECTED]", formatted)
-                        send_plate_event(formatted, confidence=float(best_box.conf))
-                        last_plate = formatted
-                        last_sent_time = current_time
+                    print("Recognized Plate:", recognized_plate)
+                else:
+                    print("No characters detected")
             else:
-                print("No plate detected in captured frame")
+                print("No plate detected in capture")
 
-            # Remove temporary image
-            os.remove(temp_path)
+        elif key == 13:  # Enter key
+            if recognized_plate:
+                send_plate_event(recognized_plate, confidence=1.0)
+                recognized_plate = None
+            else:
+                print("Nothing to save")
 
-        # Quit when pressing Q
-        if key == ord("q"):
+        # Quit
+        elif key == ord("q"):
             break
 
     cap.release()
